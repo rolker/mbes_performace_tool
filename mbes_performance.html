@@ -1,0 +1,694 @@
+<html>
+    <head>
+    <meta charset="utf-8">
+    <script src="three.min.js"></script>
+    
+    <script type="x-shader/x-vertex" id="vertexShader">
+        varying vec4 vPosition;
+        
+        void main() {
+            vPosition = modelViewMatrix * vec4(position, 1.0 );
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0 );
+            
+        }
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-pre">
+
+    #define LOG10 2.30258509299
+    #define PI 3.141592653589793238462643383279
+
+    varying vec4 vPosition;
+
+    uniform sampler2D colormaps;
+    uniform float cmapv;
+
+    uniform float depth;
+    uniform float absorptionCoefficient;
+    uniform float beamWidthTxAlong;
+    uniform float beamWidthTxAcross;
+    uniform float beamWidthRxAlong;
+    uniform float beamWidthRxAcross;
+    uniform float sourceLevel;
+    uniform float pulseDuration;
+    uniform float seafloorBackscatter;
+    uniform float di0;
+    uniform float selfNoise;
+    uniform float processingGain;
+    uniform float soundSpeed;
+    uniform float detectionThreshold;
+    uniform float signalLength;
+    uniform float pulseBandwidth;
+    uniform float mruRollAccuracy;
+    uniform float soundSpeedErrorAtArray;
+    uniform float soundSpeedErrorInWaterColumn;
+
+    uniform float minColorRange;
+    uniform float maxColorRange;
+
+    float sinc(float x) {
+      if (x == 0.0) {
+        return 1.0;
+      }
+      return sin(PI*x)/(PI*x);
+    }
+
+    void main(void) {
+        float range = length(vPosition);
+        float angle = abs(atan(vPosition.x,-vPosition.y));
+        float transmissionLoss = absorptionCoefficient*range/1000.0+20.0*log(range)/LOG10;
+        float txDirectivityFunction = 20.0*log(abs(sinc(angle/beamWidthTxAcross)))/LOG10;
+        float radiationLevel = sourceLevel+txDirectivityFunction-transmissionLoss;
+        float soundExposureLevel = radiationLevel+10.0*log(pulseDuration)/LOG10;
+        float beamAperture = abs(beamWidthRxAcross/cos(angle));
+        float ct = pulseDuration*soundSpeed;
+        float footprintX = min(abs(ct/(2.0*sin(angle))),range*beamAperture);
+        float footprintY = range*beamWidthTxAlong;
+        float footprint = footprintX*footprintY;
+        float backscatter = seafloorBackscatter+20.0*log(cos(angle))/LOG10;
+        float echoLevel = radiationLevel - transmissionLoss+backscatter+10.0*log(footprint)/LOG10;
+        float directivityIndex = di0+10.0*log(cos(angle))/LOG10;
+        float snr = echoLevel - selfNoise + directivityIndex + processingGain;
+        float dzr = tan(abs(angle))*mruRollAccuracy*100.0;
+        float snrNatural = pow(10.0,snr/10.0);
+        float interferometryPointCount = abs(vPosition.y)*cos(angle)*(beamWidthRxAcross*PI/180.0)/signalLength;
+        float phaseMeasurementError= 1.0/sqrt(interferometryPointCount*snrNatural);
+        float dzi = tan(abs(angle))*beamWidthRxAcross*phaseMeasurementError/(PI*cos(angle))*100.0;
+        float echoDuration = -2.0*vPosition.y*tan(abs(angle))*beamAperture/(soundSpeed*cos(angle));
+        echoDuration += 1.0/pulseBandwidth;
+        float dza = 100.0*0.4*soundSpeed*sqrt(echoDuration*pulseDuration)/(2.0*range);
+        float dzb;
+        if (abs(angle)>0.261799388) {
+            dzb = min(dzi,dza);
+        } else {
+            dzb = dza;
+        }
+        float dzss = 100.0*sqrt(pow(tan(abs(angle)),4.0)*soundSpeedErrorAtArray*soundSpeedErrorAtArray+pow(1.0-pow(tan(abs(angle)),2.0),2.0)*soundSpeedErrorInWaterColumn*soundSpeedErrorInWaterColumn)/soundSpeed;
+        float dz = sqrt(pow(dzb,2.0)+pow(dzr,2.0)+pow(dzss,2.0));
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-transmissionLoss">
+        float outputValue = transmissionLoss;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-radiation">
+        float outputValue = radiationLevel;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-exposureLevel">
+        float outputValue = soundExposureLevel;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-beamAperture">
+        float outputValue = beamAperture*180.0/PI;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-footprintX">
+        float outputValue = footprintX;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-footprintY">
+        float outputValue = footprintY;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-footprintArea">
+        float outputValue = footprint;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-backscatter">
+        float outputValue = backscatter;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-echo">
+        float outputValue = echoLevel;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-errorRoll">
+        float outputValue = dzr;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-errorBathy">
+        float outputValue = dzb;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-errorSoundSpeed">
+        float outputValue = dzss;
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-errorCombined">
+        float outputValue = dz;
+    </script>
+    
+    <script type="x-shader/x-vertex" id="fragmentShader-post">
+        float u = (outputValue-minColorRange)/(maxColorRange-minColorRange);
+        vec2 cmapindex = vec2(u,cmapv);
+        gl_FragColor = texture2D(colormaps, cmapindex);
+    }
+    </script>
+
+    <script type="x-shader/x-vertex" id="fragmentShader-snr">
+        float outputValue = snr;
+        float u = (outputValue-minColorRange)/(maxColorRange-minColorRange);
+        if(snr < detectionThreshold){
+            gl_FragColor = vec4(.5,.5,.5,1.0);
+        } else {
+            vec2 cmapindex = vec2(u,cmapv);
+            gl_FragColor = texture2D(colormaps, cmapindex);
+        }
+    }
+    </script>
+
+    
+    <script type="text/javascript">
+    var scene;
+    var camera;
+    var renderer;
+    var canvas;
+    var sonarMesh;
+    var shaderMaterial;
+    var colormaps;
+    var cmapv = 1.0;
+    var scale;
+    var colorScale;
+    var legendUnits;
+    
+    var valuesTable = {
+        transmissionLoss:{member:"transmission_loss", title:"Transmission Loss", units:"dB"},
+        radiation:{member:"radiation_level", title:"Source Radiation", units:"dB re 1μPa"},
+        exposureLevel:{member:"sound_exposure_level", title:"Sound Exposure Level", units:"dB re 1μPa²xs"},
+        beamAperture:{member:"beam_aperture", title:"Beam Aperture", units:"°"},
+        footprintX:{member:"footprint_x", title:"Footprint x", units:"m"},
+        footprintY:{member:"footprint_y", title:"Footprint y", units:"m"},
+        footprintArea:{member:"footprint", title:"Footprint Area", units:"m²"},
+        backscatter:{member:"backscatter", title:"Backscatter", units:"dB"},
+        echo:{member:"echo_level", title:"Echo Level", units:"dB re 1μPa"},
+        snr:{member:"snr", title:"Signal/Noise Ratio", units:"dB"},
+        errorRoll:{member:"dzr", title:"Uncertainty due to MRU/Roll error", units:"%"},
+        errorBathy:{member:"dzb", title:"Uncertainty due to bathymetry processing", units:"%"},
+        errorSoundSpeed:{member:"dzss", title:"Uncertainty due to sound speed error", units:"%"},
+        errorCombined:{member:"dz", title:"Total Uncertainty", units:"%"},
+    }
+    
+    
+    function init(){
+      document.getElementById("parametersButton").onclick=function(e){
+        var b = e.target;
+        if (b.innerHTML == "Hide"){
+          b.innerHTML = "Show";
+          document.getElementById("inputs").style.display = 'none';
+          resize();
+        } else {
+          b.innerHTML = "Hide";
+          document.getElementById("inputs").style.display = 'block';
+          resize();
+        }
+        
+      }
+
+      document.getElementById("selectMapButton").onclick=function(e){
+        document.getElementById("colormapImage").style.display = 'block';
+      }
+      
+      document.getElementById("colormapImage").onclick=function(e){
+        console.log(e)
+        cmapv = 1.0-(e.clientY/e.target.height);
+        e.target.style.display = 'none';
+        update();
+      }
+      
+      canvas = document.getElementById("displayCanvas");
+      
+      scene = new THREE.Scene();
+
+      camera = new THREE.OrthographicCamera();
+      
+      renderer = new THREE.WebGLRenderer({canvas:canvas});
+      
+      renderer.setSize( canvas.width, canvas.height );
+      
+      var geometry = new THREE.Geometry();
+      var v1 = new THREE.Vector3(0,0,0);   
+      var v2 = new THREE.Vector3(-500,-500,0);
+      var v3 = new THREE.Vector3(500,-500,0);   
+
+      geometry.vertices.push(v1);
+      geometry.vertices.push(v2);
+      geometry.vertices.push(v3);
+      
+      geometry.faces.push(new THREE.Face3(0, 1, 2));
+      
+      
+      shaderMaterial = new THREE.ShaderMaterial( {
+        vertexShader: document.getElementById( 'vertexShader' ).textContent,
+        fragmentShader: document.getElementById( 'fragmentShader-pre' ).textContent + document.getElementById( 'fragmentShader-post' ).textContent 
+      } );
+      
+      sonarMesh = new THREE.Mesh( geometry, shaderMaterial );
+
+      
+      scene.add( sonarMesh );
+
+      camera.position.z = 5;
+      
+      document.getElementById("overlayCanvas").onmousemove=function(e){
+        document.getElementById("status").innerHTML = getMouseStatus(e,document.getElementById("status").innerHTML);
+      }
+      
+      document.getElementById("overlayCanvas").onclick=function(e){
+        document.getElementById("click_status").innerHTML = getMouseStatus(e,document.getElementById("click_status").innerHTML);
+      }
+
+      
+      window.addEventListener("resize",function(){
+        resize();
+      });
+
+      document.getElementById("depth").onchange=function(){
+        resize();
+      }
+
+      document.getElementById("max_beam_angle").onchange=function(){
+        resize();
+      }
+      
+      colormaps = THREE.ImageUtils.loadTexture(document.getElementById("colormapImage").src, undefined, update);
+      colormaps.magFilter = THREE.NearestFilter;
+      colormaps.minFilter = THREE.NearestFilter;
+
+      var updateElements = ["display", "source_level", "pulse_duration", "pulse_bandwidth", "rx_bandwidth", "absorption_coefficient", "beam_width_tx_along", "beam_width_tx_across", "beam_width_rx_along", "beam_width_rx_across", "max_beam_angle", "seafloor_backscatter", "self_noise", "detection_threshold", "min_colormap", "max_colormap"];
+      
+      for(var i = 0; i < updateElements.length; i++){
+        document.getElementById(updateElements[i]).onchange=function(e){
+          update();
+        }
+      }
+      
+      var cmts = document.getElementsByName("colorMapType");
+      for (var i = 0; i < cmts.length; i++){
+        cmts[i].onchange=function(e){
+          update();
+        }
+      }
+
+      
+      resize();
+
+    }
+    
+    function resize() {
+      var dwidth = Math.round(window.innerWidth*.97);
+      var displayDiv = document.getElementById("displayDiv");
+      displayDiv.width = dwidth;
+      var cheight = Math.round(window.innerHeight*.7);
+      
+      var depth = parseFloat(document.getElementById("depth").value);
+      scale = depth/(cheight);
+      var max_angle = parseFloat(document.getElementById("max_beam_angle").value)*Math.PI/180;
+      var width = depth*Math.tan(max_angle);
+      
+      var geometry = new THREE.Geometry();
+      var v1 = new THREE.Vector3(0,0,0);   
+      var v2 = new THREE.Vector3(-width,-depth,0);
+      var v3 = new THREE.Vector3(width,-depth,0);   
+
+      geometry.vertices.push(v1);
+      geometry.vertices.push(v2);
+      geometry.vertices.push(v3);
+      
+      geometry.faces.push(new THREE.Face3(0, 1, 2));
+
+      sonarMesh.geometry = geometry;
+      
+      var cwidth = dwidth;
+      
+      var canvas = document.getElementById("displayCanvas");
+      canvas.width = cwidth;
+      canvas.height = cheight;
+      
+      var overlayCanvas = document.getElementById("overlayCanvas");
+      overlayCanvas.width = cwidth;
+      overlayCanvas.height = cheight;
+      
+      renderer.setSize( cwidth, cheight );
+      
+      camera.left = scale*cwidth/-2;
+      camera.right = scale*cwidth/2;
+      camera.top = 0;
+      camera.bottom = -depth;
+      camera.near = -1000;
+      camera.far = 1000;
+      
+      camera.updateProjectionMatrix();
+      
+      update();
+    }
+    
+    function update() {
+      var displayType = document.getElementById("display").value;
+      document.getElementById("graphTitle").innerHTML = valuesTable[displayType].title;
+      legendUnits = valuesTable[displayType].units;
+
+      var uniforms = {
+          colormaps: { type: "t", value: colormaps },
+          cmapv: {type: 'f', value: cmapv},
+          depth:  { type: 'f', value: parseFloat(document.getElementById("depth").value) },
+          sourceLevel: { type: 'f', value: parseFloat(document.getElementById("source_level").value) },
+          absorptionCoefficient: { type: 'f', value: parseFloat(document.getElementById("absorption_coefficient").value)},
+          beamWidthTxAlong: { type: 'f', value: Math.PI*parseFloat(document.getElementById("beam_width_tx_along").value)/180.0},
+          beamWidthTxAcross: { type: 'f', value: Math.PI*parseFloat(document.getElementById("beam_width_tx_across").value)/180.0},
+          beamWidthRxAlong: { type: 'f', value: Math.PI*parseFloat(document.getElementById("beam_width_rx_along").value)/180.0},
+          beamWidthRxAcross: { type: 'f', value: Math.PI*parseFloat(document.getElementById("beam_width_rx_across").value)/180.0},
+          pulseDuration: { type: 'f', value: parseFloat(document.getElementById("pulse_duration").value)},
+          seafloorBackscatter: { type: 'f', value: parseFloat(document.getElementById("seafloor_backscatter").value)},
+          selfNoise: { type: 'f', value: parseFloat(document.getElementById("self_noise").value)},
+          soundSpeed: { type: 'f', value: parseFloat(document.getElementById("sound_speed").value)},
+          detectionThreshold: { type:'f', value: parseFloat(document.getElementById("detection_threshold").value)},
+          mruRollAccuracy: { type:'f', value: Math.PI*parseFloat(document.getElementById("mru_roll_accuracy").value)/180.0},
+          soundSpeedErrorAtArray: { type:'f', value: parseFloat(document.getElementById("sound_speed_error_array").value)},
+          soundSpeedErrorInWaterColumn: { type:'f', value: parseFloat(document.getElementById("sound_speed_error_watercolumn").value)},
+      }
+      
+      uniforms.di0 = { type: 'f', value: 10*Math.log(4*Math.PI/(uniforms.beamWidthRxAcross.value*uniforms.beamWidthRxAlong.value))/Math.LN10};
+
+
+      
+      var pulseBandwidth = 1/uniforms.pulseDuration.value;
+      var pulseType = document.getElementById("pulse_type").value;
+      if(pulseType == "fm"){
+        pulseBandwidth = parseFloat(document.getElementById("pulse_bandwidth").value);
+        uniforms.signalLength = { type:'f', value: uniforms.soundSpeed.value/(2*pulseBandwidth)};
+      } else {
+        uniforms.signalLength = { type:'f', value: uniforms.soundSpeed.value*uniforms.pulseDuration.value/2.0};
+      }
+      
+      uniforms.processingGain = { type: 'f', value: 10*Math.log(pulseBandwidth*uniforms.pulseDuration.value)/Math.LN10};
+      uniforms.pulseBandwidth = { type: 'f', value: pulseBandwidth};
+      
+
+      
+      var depth = parseFloat(document.getElementById("depth").value);
+      var valsmin = getValues({x:0,y:-1});
+      var valsmax = getValues({x:0,y:-depth});
+
+      var member = valuesTable[displayType].member;
+      
+      var minscale = Math.min(valsmin[member],valsmax[member]);
+      var maxscale = Math.max(valsmin[member],valsmax[member]);
+      
+      
+      var maxAngle = Math.PI*parseFloat(document.getElementById("max_beam_angle").value)/180.0;
+      
+      var valmiddepthmaxangle = getValues({x:(depth/2.0)*Math.tan(maxAngle),y:-depth/2.0});
+      
+      minscale = Math.min(minscale,valmiddepthmaxangle[member]);
+      maxscale = Math.max(maxscale,valmiddepthmaxangle[member]);
+
+      if (displayType == "snr"){
+        minscale = uniforms.detectionThreshold.value;
+      }
+      
+      colorScale = getColorScale(minscale,maxscale);
+      
+      uniforms.minColorRange = {type: 'f', value: colorScale.min};
+      uniforms.maxColorRange = {type: 'f', value: colorScale.max};
+
+      shaderMaterial.uniforms = uniforms;
+      if (displayType == "snr"){
+        shaderMaterial.fragmentShader = document.getElementById( 'fragmentShader-pre' ).textContent + document.getElementById( 'fragmentShader-snr' ).textContent;
+      } else {
+        shaderMaterial.fragmentShader = document.getElementById( 'fragmentShader-pre' ).textContent + document.getElementById( 'fragmentShader-'+displayType ).textContent + document.getElementById( 'fragmentShader-post' ).textContent;
+      }
+      shaderMaterial.needsUpdate = true;
+      
+      render();
+    }
+    
+    
+    function render() {
+      //requestAnimationFrame( render );
+      renderer.render( scene, camera );
+      
+      var overlay = document.getElementById("overlayCanvas").getContext("2d");
+      
+      overlay.save();
+      overlay.setTransform(1, 0, 0, 1, 0, 0);
+      overlay.clearRect(0, 0, overlay.canvas.width, overlay.canvas.height);
+      overlay.restore();
+
+      drawScales();
+    }
+    
+    function drawScales(){
+      var c = document.getElementById("overlayCanvas");
+      var ctx = c.getContext("2d");
+      
+      ctx.font = "20px sans-serif";
+      ctx.fillStyle = "rgb(255,255,255)";
+      ctx.strokeStyle = "rgb(255,255,255)";
+      var maxDepth = c.height*scale;
+      for(var depth = 0; depth < maxDepth; depth += 500){
+        var y = depth/scale;
+        if (depth == 0){
+          ctx.fillText(depth+" m",15,y+15);
+        } else {
+          ctx.fillText(depth+" m",15,y+5);
+        }
+        ctx.beginPath();
+        ctx.moveTo(0,y);
+        ctx.lineTo(10,y);
+        ctx.stroke();
+      }
+      
+      var maxx = ((c.width)/2)*scale;
+      var y = c.height;
+      for (var x = Math.floor(maxx/1000.0)*-1000; x < maxx; x += 1000){
+        var cx = (x+maxx)/scale;
+        var tm = ctx.measureText(x+" m");
+        ctx.fillText(x+" m",cx-tm.width/2,y-15);
+        
+        ctx.beginPath();
+        ctx.moveTo(cx,y);
+        ctx.lineTo(cx,y-10);
+        ctx.stroke();
+      }
+
+      var legendWidth = Math.floor(c.width*.2);
+      ctx.fillStyle = "rgb(255,255,255)";
+      ctx.fillText(colorScale.min+" "+legendUnits,50-ctx.measureText(colorScale.min).width/2,50);
+      ctx.fillText(colorScale.max+" "+legendUnits,50+legendWidth-ctx.measureText(colorScale.max).width/2,50);
+      var imgy = Math.floor(colormaps.image.height*cmapv);
+      
+      ctx.drawImage(colormaps.image,0,colormaps.image.height-imgy,colormaps.image.width,1,50,10,legendWidth,25);
+      
+      //var step = legendWidth/255;
+      //for(var i = 0; i < 255; i++){
+        //ctx.fillStyle = jet(i,0,255);
+        //ctx.fillRect(Math.floor(50+i*step),10,Math.ceil(step),25);
+      //}
+      
+    }
+    
+    
+    function getColorScale(min,max){
+      document.getElementById("min_colormap_auto").innerHTML = min;
+      document.getElementById("max_colormap_auto").innerHTML = max;
+      var ret = {min:min,max:max};
+      var mapTypes = document.getElementsByName("colorMapType");
+      var colorMapType = null;
+      for(var i = 0, length = mapTypes.length; i < length; i++) {
+        if(mapTypes[i].checked){
+          colorMapType=mapTypes[i].value;
+          break;
+        }
+      }
+      if(colorMapType == "user"){
+        ret.min = document.getElementById("min_colormap").value;
+        ret.max = document.getElementById("max_colormap").value;
+      }
+      return ret;
+    }
+
+    function sinc(x) {
+      if (x == 0) {
+        return 1;
+      }
+      return Math.sin(Math.PI*x)/(Math.PI*x);
+    }
+    
+    function getXY(mousex,mousey,canvas){
+      return { x:scale*(mousex-(canvas.width/2)), y: -scale*mousey};
+    }
+    
+    function getValues(xy) {
+      var ret = { x: xy.x, y: xy.y}
+      ret.range =  Math.sqrt(ret.x*ret.x+ret.y*ret.y)
+      ret.angle = Math.atan2(ret.x,-ret.y);
+      ret.angle_deg = ret.angle*180.0/Math.PI;
+      
+      var sl = parseFloat(document.getElementById("source_level").value);
+      var max_beam_angle = parseFloat(document.getElementById("max_beam_angle").value);
+      var absorption_coefficient = parseFloat(document.getElementById("absorption_coefficient").value);
+      var beam_width_tx_along = parseFloat(document.getElementById("beam_width_tx_along").value);
+      var beam_width_tx_across = parseFloat(document.getElementById("beam_width_tx_across").value);
+      var beam_width_rx_along = parseFloat(document.getElementById("beam_width_rx_along").value);
+      var beam_width_rx_across = parseFloat(document.getElementById("beam_width_rx_across").value);
+      var t = parseFloat(document.getElementById("pulse_duration").value);
+      var c = parseFloat(document.getElementById("sound_speed").value);
+      var ct = c*t;
+      var seafloor_backscatter = parseFloat(document.getElementById("seafloor_backscatter").value);
+      var pulse_bandwidth = 1/t;
+      var pulseType = document.getElementById("pulse_type").value;
+      if(pulseType == "fm"){
+        pulse_bandwidth = parseFloat(document.getElementById("pulse_bandwidth").value);
+      }
+      var self_noise = parseFloat(document.getElementById("self_noise").value);
+      var beam_width_rx_across_rad = Math.PI*beam_width_rx_across/180.0;
+      var beam_width_rx_along_rad = Math.PI*beam_width_rx_along/180.0;
+      var di0 = 10*Math.log(4*Math.PI/(beam_width_rx_across_rad*beam_width_rx_along_rad))/Math.LN10;
+      var processing_gain = 10*Math.log(pulse_bandwidth*t)/Math.LN10;
+      var mru_roll_accuracy = Math.PI*parseFloat(document.getElementById("mru_roll_accuracy").value)/180.0;
+      var c_error_at_array = parseFloat(document.getElementById("sound_speed_error_array").value);
+      var c_error_in_watercolumn = parseFloat(document.getElementById("sound_speed_error_watercolumn").value);
+
+      ret.d = 20*Math.log(Math.abs(sinc(ret.angle_deg/beam_width_tx_across)))/Math.LN10;
+      ret.transmission_loss = absorption_coefficient*ret.range/1000+20*Math.log(ret.range)/Math.LN10;
+      ret.radiation_level = sl+ret.d-ret.transmission_loss;
+      ret.sound_exposure_level = ret.radiation_level+10*Math.log(t)/Math.LN10;
+      ret.beam_aperture = Math.abs(beam_width_rx_across/Math.cos(ret.angle));
+      ret.footprint_x = Math.min(Math.abs(ct/(2*Math.sin(ret.angle))),ret.range*Math.PI*ret.beam_aperture/180.0);
+      ret.footprint_y = ret.range*Math.PI*beam_width_tx_along/180.0;
+      ret.footprint = ret.footprint_x*ret.footprint_y;
+      ret.backscatter = seafloor_backscatter+20*Math.log(Math.cos(ret.angle))/Math.LN10;
+      ret.echo_level = ret.radiation_level - ret.transmission_loss+ret.backscatter+10*Math.log(ret.footprint)/Math.LN10;
+      ret.directivity_index = di0+10*Math.log(Math.cos(ret.angle))/Math.LN10;
+      ret.snr = ret.echo_level - self_noise + ret.directivity_index + processing_gain;
+      ret.dzr = Math.tan(Math.abs(ret.angle))*mru_roll_accuracy*100.0;
+      ret.snr_natural = Math.pow(10,ret.snr/10.0);
+      if(pulseType == "cw") {
+        ret.signal_length = c*t/2;
+      } else {
+        ret.signal_length = c/(2*pulse_bandwidth);
+      }
+      ret.interferometry_point_count = Math.abs(ret.y)*Math.cos(ret.angle)*(beam_width_rx_across*Math.PI/180.0)/ret.signal_length;
+      ret.phase_measurement_error= 1/Math.sqrt(ret.interferometry_point_count*ret.snr_natural);
+      ret.dzi = Math.tan(Math.abs(ret.angle))*beam_width_rx_across_rad*ret.phase_measurement_error/(Math.PI*Math.cos(ret.angle))*100.0;
+      ret.echo_duration = -2*ret.y*Math.tan(Math.abs(ret.angle))*ret.beam_aperture/(c*Math.cos(ret.angle));
+      if (pulseType == "cw") {
+        ret.echo_duration += t;
+      } else {
+        ret.echo_duration += 1/pulse_bandwidth;
+      }
+      ret.dza = 100*0.4*c*Math.sqrt(ret.echo_duration*t)/(2*ret.range);
+      if (Math.abs(ret.angle_deg)>15) {
+        ret.dzb = Math.min(ret.dzi,ret.dza);
+      } else {
+        ret.dzb = ret.dza;
+      }
+      ret.dzss = 100*Math.sqrt(Math.pow(Math.tan(ret.angle),4)*c_error_at_array*c_error_at_array+Math.pow(1-Math.pow(Math.tan(ret.angle),2),2)*c_error_in_watercolumn*c_error_in_watercolumn)/c;
+      ret.dz = Math.sqrt(Math.pow(ret.dzb,2)+Math.pow(ret.dzr,2)+Math.pow(ret.dzss,2));
+      
+      return ret
+    }
+
+    function getMouseStatus(e,previous) {
+      var status = previous;
+      var canvas = document.getElementById("displayCanvas");
+      var rect = canvas.getBoundingClientRect();
+      vals = getValues(getXY(e.clientX-rect.left,e.clientY-rect.top,canvas));
+      status = "x:"+Math.round(vals.x)+" y:"+Math.round(vals.y)+" range:"+Math.round(vals.range)+" m, angle:"+Math.round(vals.angle_deg)+" deg";
+      status += ", RL:"+Math.round(vals.radiation_level)+" TL: "+Math.round(vals.transmission_loss)+" SEL: "+Math.round(vals.sound_exposure_level);
+      status += " D: " + Math.round(vals.d*10)/10 + " BA: " + Math.round(vals.beam_aperture*100)/100 + " deg"
+      status += " footprint: x: " + Math.round(vals.footprint_x*10)/10 + " y: " + Math.round(vals.footprint_y*10)/10 + " area: " + Math.round(vals.footprint*10)/10;
+      status += " BS: " + Math.round(vals.backscatter*10)/10 + ", EL: " + Math.round(vals.echo_level*10)/10;
+      status += " DI: " + Math.round(vals.directivity_index*10)/10+", SNR: " + Math.round(vals.snr*10)/10;
+      status += " dZR: " + Math.round(vals.dzr*1000)/1000 + " dZI: " + Math.round(vals.dzi*1000)/1000; 
+      status += " dZA: " + Math.round(vals.dza*1000)/1000 + " dZB: " + Math.round(vals.dzb*1000)/1000;
+      status += " dZss: " + Math.round(vals.dzss*1000)/1000 + " dZ: " + Math.round(vals.dz*1000)/1000;
+      return status;
+    }
+    
+    </script>
+    </head>
+    <body onLoad="init()" style="font-family:Arial">
+    <img id="colormapImage" src="colormaps.png" style="z-index: 10; position:absolute; left:10px; top:10px; display:none;">
+    Parameters: <button id="parametersButton">Hide</button>
+    <div id="inputs" name="inputs">
+    <table>
+        <tr>
+            <td>Sonar:</td>
+            <td>Frequency (kHz) </td><td><input type="text" id="frequency" value="12" size="6"></input></td>
+            <td>Source Level (dB/1uPa@1m) </td><td><input type="text" id="source_level" value="235" size="6"></input></td>
+            <td>Pulse Duration (s) </td><td><input type="text" id="pulse_duration" value="0.01" size="6"></input></td>
+            <td>Pulse Type</td><td> 
+                <select id="pulse_type">
+                    <option value="cw">CW</option>
+                    <option value="fm">FM</option>
+                </select>
+            </td>
+            <td>Pulse Bandwidth (Hz) </td><td><input type="text" id="pulse_bandwidth" size="6"></input></td>
+            <td>Rx Filter Bandwidth (Hz) </td><td><input type="text" id="rx_bandwidth" size="6" value="100"></input></td>
+        </tr>
+        <tr>
+            <td>Beam Widths (deg):</td><td> Tx Along </td><td><input type="text" value="1" id="beam_width_tx_along" size="6"></input></td>
+            <td>Tx Across </td><td><input type="text" value="107" id="beam_width_tx_across" size="6"></input></td>
+            <td>Rx Along </td><td><input type="text" value="30" id="beam_width_rx_along" size="6"></input></td>
+            <td>Rx Across </td><td><input type="text" value="2" id="beam_width_rx_across" size="6"></input></td>
+            <td>Max Beam Angle (deg):</td><td><input type="text" id="max_beam_angle" value="75" size="6"></input></td>
+        </tr>
+        <tr>
+            <td>Environment:</td>
+            <td>Sound Speed (m/s) </td><td><input type="text" id="sound_speed" value="1500" size="6"></input></td>
+            <td>Max Depth (m) </td><td><input type="text" id="depth" value="5000" size="6"></input></td>
+            <td>Absorption Coefficient (dB/km) </td><td><input type="text" value="1" id="absorption_coefficient" size="6"></input></td>
+            <td>Seafloor Backscatter level (dB/m^2) </td><td><input type="text" id="seafloor_backscatter" value="-30" size="6"></input></td>
+            <td>Self-Noise (dB/1uPa^2/Hz) </td><td><input type="text" id="self_noise" value="45" size="6"></input></td>
+            <td>Detection Threshold (dB) </td><td><input type="text" id="detection_threshold" value="10" size="6"></input></td>
+        </tr>
+        <tr>
+            <td>Errors:</td>    
+            <td>MRU Roll Accuracy (deg RMS) </td><td><input type="text" id="mru_roll_accuracy" value="0.01" size="6"></input></td>
+            <td>Sound Speed Error: Array (m/s) </td><td><input type="text" id="sound_speed_error_array" value="0.1" size="6"></input></td>
+            <td>Water Column (m/s) </td><td><input type="text" id="sound_speed_error_watercolumn" value="1" size="6"></input></td>
+	   </tr>
+        <tr>   
+            <td colspan="2"><select id="display">
+                <option value="transmissionLoss">Transmission Loss</option>
+                <option value="radiation">Source Radiation</option>
+		        <option value="exposureLevel">Sound Exposure Level</option>
+		        <option value="beamAperture">Beam Aperture</option>
+		        <option value="footprintX">Footprint x</option>
+		        <option value="footprintY">Footprint y</option>
+		        <option value="footprintArea">Footprint Area</option>
+		        <option value="backscatter">Backscatter</option>
+		        <option value="echo">Echo Level</option>
+		        <option value="snr">Signal/Noise Ratio</option>
+		        <option value="errorRoll">Uncertainty due to MRU/Roll error</option>
+		        <option value="errorBathy">Uncertainty due to bathymetry processing</option>
+		        <option value="errorSoundSpeed">Uncertainty due to sound speed error</option>
+		        <option value="errorCombined">Total Uncertainty</option>
+	        </select></td>
+	        <td><button id="selectMapButton">Select Map</button></td>
+            <td>Color Map:</td>
+            <td colspan="4"><input type="radio" name="colorMapType" value="user">
+                Min  <input type="text" id="min_colormap" size="6"></input>
+                Max  <input type="text" id="max_colormap" size="6"></input>
+            </td>
+            <td colspan="4"><input type="radio" name="colorMapType" value="auto" checked>auto:
+                Min: <span id="min_colormap_auto"></span>
+                Max: <span id="max_colormap_auto"></span>
+            </td>
+        </tr>
+    </table>
+    </div>
+    <div id="displayDiv" style="overflow-x:auto">
+        <h2 id="graphTitle" style="text-align:center;"></h2>
+        <div id="canvasDiv" style="position:relative; width:100%; height:72%;">
+            <canvas id="displayCanvas" width="400" height="400" style="z-index: 1; position:absolute; left:0px; top:0px;"></canvas>
+            <canvas id="overlayCanvas" width="400" height="400" style="z-index: 2; position:absolute; left:0px; top:0px;"></canvas>
+        </div>
+    </div>
+    <div id="status"></div>
+    <div id="click_status"></div>
+    </body>
+</html>
+    
